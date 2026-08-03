@@ -1,5 +1,6 @@
 const express = require("express");
 const multer = require("multer");
+const rateLimit = require("express-rate-limit");
 const path = require("path");
 const os = require("os");
 const fs = require("fs");
@@ -37,8 +38,37 @@ const upload = multer({
   }
 });
 
+const aiRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: "Too many AI requests. Please try again later." },
+  keyGenerator: (req) => req.user?.id || req.ip
+});
+
+const aiGenerateRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: "Too many quiz generation requests. Please try again later." },
+  keyGenerator: (req) => req.user?.id || req.ip
+});
+
+const aiChatRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: "Too many tutor chat requests. Please slow down." },
+  keyGenerator: (req) => req.user?.id || req.ip
+});
+
 router.use(authMiddleware);
-router.post("/generate", upload.single("document"), (req, res) => AIController.generateQuiz(req, res));
+router.use(aiRateLimit);
+router.post("/generate", aiGenerateRateLimit, upload.single("document"), (req, res) => AIController.generateQuiz(req, res));
+router.post("/chat", aiChatRateLimit, (req, res) => AIController.chat(req, res));
 
 router.use((err, req, res, next) => {
   if (req.file?.path) {

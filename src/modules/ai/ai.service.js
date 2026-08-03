@@ -11,7 +11,13 @@ const GEMINI_MODELS = [
   "gemini-2.5-flash-lite"
 ];
 
-const JSON_PROMPT = `Read the uploaded document carefully and generate a quiz in valid JSON only. Use only information contained in the uploaded document. Do not invent facts. Generate exactly the requested number of multiple-choice questions. Each question must have exactly four options. Only one option can be correct. Randomize the position of the correct answer. Avoid duplicate questions. Questions should cover different parts of the document. Return ONLY valid JSON with no markdown, no extra text.\n\nJSON format:\n{\n  "title": "",\n  "description": "",\n  "questions": [\n    {\n      "question": "",\n      "options": ["", "", "", ""],\n      "correctAnswer": 0,\n      "difficulty": "Easy",\n      "explanation": ""\n    }\n  ]\n}`;
+const QUIZ_FORMAT = `Return ONLY valid JSON with no markdown, no extra text.\n\nJSON format:\n{\n  "title": "",\n  "description": "",\n  "questions": [\n    {\n      "question": "",\n      "options": ["", "", "", ""],\n      "correctAnswer": 0,\n      "difficulty": "Easy",\n      "explanation": ""\n    }\n  ]\n}`;
+
+const CHAT_PROMPT = `You are QuizRoom Tutor, a private, patient study assistant for one learner.\nAnswer clearly and directly.\nWhen the learner asks for help, explain the concept step by step and use simple examples.\nWhen the learner asks for practice, you may ask one short question at a time and wait for the answer.\nDo not mention policies or say that you are an AI model.\nKeep responses focused on the learner's current topic and avoid unnecessary filler.`;
+
+function buildQuizPrompt({ focusLabel, focusText, numberOfQuestions, difficulty }) {
+  return `${focusLabel}\n\n${focusText}\n\nGenerate exactly ${numberOfQuestions} multiple-choice questions at ${difficulty} difficulty.\nEach question must have exactly four options. Only one option can be correct. Randomize the position of the correct answer. Avoid duplicate questions. Cover different parts of the material. ${QUIZ_FORMAT}`;
+}
 
 // Rough token budget: give each question ~600 tokens of headroom (question +
 // 4 options + explanation + JSON overhead) plus a fixed base for the
@@ -31,38 +37,11 @@ class AIService {
     }
   }
 
-  async generateQuizFromDocument({ hostId, documentPath, documentName, numberOfQuestions, difficulty }) {
-    if (!hostId) throw new Error("Host authorization required");
-    if (!documentPath) throw new Error("Document path is required");
-
-    const content = await extractTextFromFile(documentPath, documentName);
-    if (!content || !content.trim()) {
-      throw new Error("Uploaded document contains no readable text.");
-    }
-
-    const prompt = `${JSON_PROMPT}\n\nDocument content:\n${content}\n\nNumber of questions: ${numberOfQuestions}\nDifficulty: ${difficulty}`;
-    const requestBody = {
-      contents: [
-        {
-          parts: [
-            {
-              text: prompt
-            }
-          ]
-        }
-      ],
-      generationConfig: {
-        temperature: 0.7,
-        maxOutputTokens: computeMaxOutputTokens(numberOfQuestions),
-        // Forces Gemini to emit raw JSON with no markdown fencing or
-        // preamble, instead of relying purely on prompt compliance.
-        responseMimeType: "application/json"
-      }
-    };
-
+  async callGemini({ prompt, json = false, maxOutputTokens = 2000, temperature = 0.7 }) {
     let response;
     let data;
     let lastError;
+
     for (const model of GEMINI_MODELS) {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
       response = await fetch(url, {
@@ -71,7 +50,14 @@ class AIService {
           "Content-Type": "application/json",
           "x-goog-api-key": this.apiKey
         },
-        body: JSON.stringify(requestBody)
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            temperature,
+            maxOutputTokens,
+            ...(json ? { responseMimeType: "application/json" } : {})
+          }
+        })
       });
 
       data = await response.json();
@@ -90,12 +76,36 @@ class AIService {
       throw new Error(lastError || "Gemini API request failed.");
     }
 
-    // Surface finishReason so truncation is visible in logs immediately,
-    // rather than only discovering it via a downstream JSON parse failure.
     const finishReason = data?.candidates?.[0]?.finishReason;
     if (finishReason && finishReason !== "STOP") {
       console.warn(`[AI] Gemini finishReason was "${finishReason}" (expected "STOP") - output may be truncated or blocked.`);
     }
+
+    return data;
+  }
+
+  async generateQuizFromDocument({ hostId, documentPath, documentName, numberOfQuestions, difficulty }) {
+    if (!hostId) throw new Error("Host authorization required");
+    if (!documentPath) throw new Error("Document path is required");
+
+    const content = await extractTextFromFile(documentPath, documentName);
+    if (!content || !content.trim()) {
+      throw new Error("Uploaded document contains no readable text.");
+    }
+
+    const prompt = buildQuizPrompt({
+      focusLabel: "Read the uploaded document carefully and generate a quiz based only on the content below.",
+      focusText: `Document content:\n${content}`,
+      numberOfQuestions,
+      difficulty
+    });
+
+    const data = await this.callGemini({
+      prompt,
+      json: true,
+      maxOutputTokens: computeMaxOutputTokens(numberOfQuestions),
+      temperature: 0.7
+    });
 
     const rawOutput = this.extractTextFromGeminiResponse(data);
 
@@ -105,6 +115,61 @@ class AIService {
 
     const quiz = this.parseAndValidateAIOutput(rawOutput, numberOfQuestions);
     return quiz;
+  }
+
+  async generateQuizFromTopic({ hostId, topic, numberOfQuestions, difficulty }) {
+    if (!hostId) throw new Error("Host authorization required");
+    if (!topic || !topic.trim()) throw new Error("Topic is required.");
+
+    const prompt = buildQuizPrompt({
+      focusLabel: "Create a quiz about the topic below.",
+      focusText: `Topic:\n${topic.trim()}`,
+      numberOfQuestions,
+      difficulty
+    });
+
+    const data = await this.callGemini({
+      prompt,
+      json: true,
+      maxOutputTokens: computeMaxOutputTokens(numberOfQuestions),
+      temperature: 0.8
+    });
+
+    const rawOutput = this.extractTextFromGeminiResponse(data);
+    if (!rawOutput) {
+      throw new Error("Invalid response from Gemini API.");
+    }
+
+    return this.parseAndValidateAIOutput(rawOutput, numberOfQuestions);
+  }
+
+  async chatWithTutor({ hostId, message, history = [] }) {
+    if (!hostId) throw new Error("Host authorization required");
+    if (!message || !String(message).trim()) throw new Error("A message is required.");
+
+    const transcript = Array.isArray(history)
+      ? history
+          .filter((entry) => entry && typeof entry === "object" && entry.content)
+          .slice(-10)
+          .map((entry) => `${String(entry.role || "user").toUpperCase()}: ${String(entry.content).trim()}`)
+          .join("\n")
+      : "";
+
+    const prompt = `${CHAT_PROMPT}\n\nConversation so far:\n${transcript || "No previous conversation."}\n\nLearner: ${String(message).trim()}\nTutor:`;
+
+    const data = await this.callGemini({
+      prompt,
+      json: false,
+      maxOutputTokens: 1200,
+      temperature: 0.6
+    });
+
+    const reply = this.extractTextFromGeminiResponse(data);
+    if (!reply || !reply.trim()) {
+      throw new Error("Invalid response from Gemini API.");
+    }
+
+    return { reply: reply.trim() };
   }
 
   extractTextFromGeminiResponse(data) {

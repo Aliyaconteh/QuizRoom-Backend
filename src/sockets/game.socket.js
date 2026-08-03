@@ -13,6 +13,7 @@ class GameSocketHandler {
     socket.on("game:join", (data) => this.handleGameJoin(socket, data));
     socket.on("game:answer", (data) => this.handleAnswerSubmission(socket, data));
     socket.on("submit_answer", (data) => this.handleAnswerSubmission(socket, data));
+    socket.on("submitAnswer", (data) => this.handleAnswerSubmission(socket, data));
     socket.on("next-question", (data) => this.handleNextQuestion(socket, data));
     socket.on("next_question", (data) => this.handleNextQuestion(socket, data));
     socket.on("quiz_end", (data) => this.handleQuizEnd(socket, data));
@@ -58,7 +59,10 @@ class GameSocketHandler {
         questionEndTime: null,
         timerInterval: null,
         timerTimeout: null,
-        submittedAnswers: new Set()
+        submittedAnswers: new Set(),
+        answerResults: new Map(),
+        previousRanks: new Map(),
+        leaderboardTimer: null
       });
 
       this.io.to(roomCode).emit("room:started", { roomCode });
@@ -113,6 +117,7 @@ class GameSocketHandler {
     const timeLimit = this.getQuestionTimeLimit(question);
     roomState.questionEndTime = roomState.questionStartTime + timeLimit * 1000;
     roomState.submittedAnswers = new Set();
+    roomState.answerResults = new Map();
 
     this.io.to(roomCode).emit("game:question", this.formatQuestion(roomState, question));
 
@@ -159,7 +164,8 @@ class GameSocketHandler {
 
   async handleAnswerSubmission(socket, data = {}) {
     try {
-      const { roomCode, answer, clientTimestamp, clientPredictedScore, username, playerId } = data;
+      const { roomCode, answer, selectedOption, clientTimestamp, clientPredictedScore, username, playerId } = data;
+      const selectedAnswer = selectedOption ?? answer;
       const roomState = this.rooms.get(roomCode);
 
       if (!roomState) {
@@ -210,7 +216,7 @@ class GameSocketHandler {
       const serverTimestamp = Date.now();
       const submittedAt = Number(clientTimestamp || serverTimestamp);
       const responseTime = Math.max(0, serverTimestamp - roomState.questionStartTime);
-      const isCorrect = String(answer).trim() === String(question.correct_answer).trim();
+      const isCorrect = String(selectedAnswer).trim() === String(question.correct_answer).trim();
       const pointsAwarded = this.computeScore(isCorrect, responseTime, this.getQuestionTimeLimit(question));
       const serverScore = Number(player.score || 0) + pointsAwarded;
       const predictedScore = Number(clientPredictedScore || 0);
@@ -222,7 +228,9 @@ class GameSocketHandler {
           player_id: player.id,
           user_id: null,
           question_id: question.id,
-          selected_answer: answer,
+          selected_answer: selectedAnswer,
+          selected_option: selectedAnswer,
+          points_awarded: pointsAwarded,
           is_correct: isCorrect,
           response_time: responseTime
         }], { onConflict: "room_id,player_id,question_id" });
@@ -270,7 +278,7 @@ class GameSocketHandler {
         roomId: roomState.id,
         playerId: player.id,
         questionId: question.id,
-        answer,
+        answer: selectedAnswer,
         syncModel: roomState.syncMode,
         clientTimestamp: submittedAt,
         clientPredictedScore: predictedScore
@@ -285,7 +293,11 @@ class GameSocketHandler {
         model: roomState.syncMode
       });
 
+      roomState.answerResults.set(answerKey, { playerId: player.id, selectedOption: selectedAnswer, isCorrect, pointsAwarded, responseTime, revealedCorrectAnswer: null });
+      socket.emit("answerResult", roomState.answerResults.get(answerKey));
       await this.broadcastLeaderboard(roomCode);
+      const { count } = await supabaseAdmin.from("room_players").select("id", { count: "exact", head: true }).eq("room_id", roomState.id);
+      if (count && roomState.submittedAnswers.size >= count) await this.advanceQuestion(roomCode, roomState.currentQuestionIndex);
     } catch (err) {
       console.error("Error submitting answer:", err);
       socket.emit("error", { message: `Failed to submit answer: ${err.message}` });
@@ -315,9 +327,10 @@ class GameSocketHandler {
       timestamp: Date.now()
     });
 
+    this.io.to(roomCode).emit("questionEnded", { roomCode, leaderboard: await this.broadcastLeaderboard(roomCode), duration: 5000 });
     const nextIndex = roomState.currentQuestionIndex + 1;
     if (nextIndex < roomState.questions.length) {
-      this.broadcastQuestion(roomCode, nextIndex);
+      setTimeout(() => this.broadcastQuestion(roomCode, nextIndex), 5000);
     } else {
       await this.handleQuizCompletion(roomCode);
     }
@@ -405,6 +418,8 @@ class GameSocketHandler {
 
     this.io.to(roomCode).emit("game:leaderboard", { players });
     this.io.to(roomCode).emit("leaderboard-update", { leaderboard: players });
+    this.io.to(roomCode).emit("leaderboardUpdated", { leaderboard: players });
+    return players;
   }
 
   async findPlayer(roomId, username, playerId) {
@@ -444,10 +459,10 @@ class GameSocketHandler {
   computeScore(isCorrect, responseTimeMs, timeLimitSeconds) {
     if (!isCorrect) return 0;
 
-    const baseScore = 100;
+    const baseScore = 1000;
     const secondsUsed = responseTimeMs / 1000;
     const remainingRatio = Math.max(0, (timeLimitSeconds - secondsUsed) / timeLimitSeconds);
-    return baseScore + Math.round(remainingRatio * 50);
+    return Math.round(baseScore * remainingRatio);
   }
 
   getQuestionTimeLimit(question) {
@@ -488,3 +503,7 @@ module.exports = (io, socket) => {
 };
 
 module.exports.GameSocketHandler = GameSocketHandler;
+
+
+
+

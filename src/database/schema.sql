@@ -57,9 +57,12 @@ create table answers (
   user_id uuid references users(id) on delete cascade,
   question_id uuid references questions(id),
   selected_answer text,
+  selected_option text,
   is_correct boolean,
+  points_awarded int default 0,
   response_time int,
   created_at timestamp default now(),
+  submitted_at timestamp default now(),
   unique (room_id, player_id, question_id)
 );
 create table leaderboard (
@@ -105,3 +108,5 @@ create table synchronization_logs (
 
 create view sync_logs as select * from synchronization_logs;
 create view quiz_rooms as select * from rooms;
+
+
