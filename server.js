@@ -92,7 +92,7 @@ const ENVIRONMENT = process.env.NODE_ENV || "development";
 
 server.listen(PORT, async () => {
   await initializeApp();
-  console.log(`\n🚀 QuizRoom Server Running`);
+  console.log(`\n🚀 KuizRoom Server Running`);
   console.log(`📡 Port: ${PORT}`);
   console.log(`🔐 Environment: ${ENVIRONMENT}`);
   console.log(`📊 Metrics Collection: ENABLED`);

@@ -13,7 +13,7 @@ const GEMINI_MODELS = [
 
 const QUIZ_FORMAT = `Return ONLY valid JSON with no markdown, no extra text.\n\nJSON format:\n{\n  "title": "",\n  "description": "",\n  "questions": [\n    {\n      "question": "",\n      "options": ["", "", "", ""],\n      "correctAnswer": 0,\n      "difficulty": "Easy",\n      "explanation": ""\n    }\n  ]\n}`;
 
-const CHAT_PROMPT = `You are QuizRoom Tutor, a private, patient study assistant for one learner.\nAnswer clearly and directly.\nWhen the learner asks for help, explain the concept step by step and use simple examples.\nWhen the learner asks for practice, you may ask one short question at a time and wait for the answer.\nDo not mention policies or say that you are an AI model.\nKeep responses focused on the learner's current topic and avoid unnecessary filler.`;
+const CHAT_PROMPT = `You are KuizRoom Tutor, a private, patient study assistant for one learner.\nAnswer clearly and directly.\nWhen the learner asks for help, explain the concept step by step and use simple examples.\nWhen the learner asks for practice, you may ask one short question at a time and wait for the answer.\nDo not mention policies or say that you are an AI model.\nKeep responses focused on the learner's current topic and avoid unnecessary filler.`;
 
 function buildQuizPrompt({ focusLabel, focusText, numberOfQuestions, difficulty }) {
   return `${focusLabel}\n\n${focusText}\n\nGenerate exactly ${numberOfQuestions} multiple-choice questions at ${difficulty} difficulty.\nEach question must have exactly four options. Only one option can be correct. Randomize the position of the correct answer. Avoid duplicate questions. Cover different parts of the material. ${QUIZ_FORMAT}`;

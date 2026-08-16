@@ -1,4 +1,4 @@
-# QuizRoom Backend
+# KuizRoom Backend
 
 Node.js, Express, Socket.IO, and Supabase backend for a real-time multiplayer quiz system.
 

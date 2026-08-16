@@ -44,7 +44,7 @@ app.use("/api/sync", syncRoutes);
 app.get("/health", (req, res) => {
   res.json({
     status: "OK",
-    message: "QuizRoom API is running"
+    message: "KuizRoom API is running"
   });
 });
 
