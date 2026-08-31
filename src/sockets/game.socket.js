@@ -153,6 +153,9 @@ class GameSocketHandler {
       serverTime: Date.now(),
       questionStartedAt: roomState.questionStartTime,
       questionEndsAt: roomState.questionEndTime,
+      syncMode: roomState.syncMode || "server",
+      delayLevel: roomState.delayLevel || "low",
+      delayMs: roomState.delayMs || 0,
       question: {
         id: question.id,
         text: question.question,
@@ -289,9 +292,31 @@ class GameSocketHandler {
         pointsAwarded,
         score: serverScore,
         serverScore,
+        predictedScore,
+        reconciliationRequired: predictedScore > 0 && predictedScore !== serverScore,
+        scoreDifference: predictedScore - serverScore,
         timestamp: serverTimestamp,
         model: roomState.syncMode
       });
+
+      if (predictedScore > 0 && predictedScore !== serverScore) {
+        socket.emit("score_reconciled", {
+          playerId: player.id,
+          username: player.username,
+          predictedScore,
+          serverScore,
+          scoreDifference: predictedScore - serverScore,
+          isCorrect,
+          pointsAwarded
+        });
+        this.io.to(roomCode).emit("sync-reconciliation", {
+          playerId: player.id,
+          username: player.username,
+          serverScore,
+          predictedScore,
+          difference: predictedScore - serverScore
+        });
+      }
 
       roomState.answerResults.set(answerKey, { playerId: player.id, selectedOption: selectedAnswer, isCorrect, pointsAwarded, responseTime, revealedCorrectAnswer: null });
       socket.emit("answerResult", roomState.answerResults.get(answerKey));

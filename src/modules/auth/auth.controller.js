@@ -115,6 +115,59 @@ class AuthController {
       return res.status(400).json({ success: false, message: err.message });
     }
   }
+
+  async getStats(req, res) {
+    try {
+      const userId = req.user?.id;
+      const username = req.user?.username;
+
+      const { supabaseAdmin } = require("../../config/supabase.config");
+
+      // Count created quizzes
+      const { count: quizCount } = await supabaseAdmin
+        .from("quizzes")
+        .select("id", { count: "exact", head: true })
+        .eq("created_by", userId);
+
+      // Fetch player sessions
+      const { data: sessionRows } = await supabaseAdmin
+        .from("session_results")
+        .select("id, room_id, score, rank, created_at, rooms(code, name, created_at)")
+        .or(`user_id.eq.${userId},player_id.eq.${userId}`)
+        .order("created_at", { ascending: false })
+        .limit(20);
+
+      const gamesPlayed = sessionRows ? sessionRows.length : 0;
+      const wins = sessionRows ? sessionRows.filter((r) => r.rank === 1).length : 0;
+      const podiums = sessionRows ? sessionRows.filter((r) => r.rank >= 1 && r.rank <= 3).length : 0;
+      const totalPoints = sessionRows ? sessionRows.reduce((sum, r) => sum + Number(r.score || 0), 0) : 0;
+      const avgScore = gamesPlayed ? Math.round(totalPoints / gamesPlayed) : 0;
+
+      const history = (sessionRows || []).map((row) => ({
+        id: row.id,
+        roomCode: row.rooms?.code || "N/A",
+        roomName: row.rooms?.name || "Multiplayer Session",
+        score: Number(row.score || 0),
+        rank: row.rank || "-",
+        playedAt: row.created_at
+      }));
+
+      return res.json({
+        success: true,
+        data: {
+          gamesPlayed,
+          quizzesCreated: quizCount || 0,
+          wins,
+          podiums,
+          totalPoints,
+          avgScore,
+          history
+        }
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  }
 }
 
 module.exports = new AuthController();

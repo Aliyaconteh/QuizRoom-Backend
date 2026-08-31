@@ -4,7 +4,8 @@
   "main": "index.js",
   "scripts": {
     "dev": "nodemon server.js",
-    "start": "node server.js"
+    "start": "node server.js",
+    "benchmark": "node scripts/simulate-game.js"
   },
   "keywords": [],
   "author": "",
